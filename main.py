@@ -1,0 +1,298 @@
+#!/usr/bin/env python
+"""Command-line interface for RAG application."""
+
+import argparse
+import sys
+from pathlib import Path
+import logging
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+from app.config import load_config, validate_config
+from app.utils import setup_logging, get_logger
+from app.pdf.text_extractor import PDFTextExtractor
+from app.pdf.table_extractor import PDFTableExtractor
+from app.text_chunker import TextChunker
+from app.embeddings.chroma_store import ChromaVectorStore
+from app.llm.client import LLMFactory
+from app.rag_pipeline import RAGPipeline
+
+
+def setup_pipeline():
+    """Initialize and return configured RAG pipeline.
+
+    Returns:
+        RAGPipeline instance
+
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    config = load_config()
+    validate_config(config)
+
+    # Setup logging
+    setup_logging(log_level=config.log_level)
+    logger = get_logger("main")
+    logger.info("Configuration loaded and validated")
+
+    # Initialize components
+    pdf_extractor = PDFTextExtractor(method=config.pdf.extraction_method)
+    text_chunker = TextChunker(
+        chunk_size=config.pdf.chunk_size,
+        chunk_overlap=config.pdf.chunk_overlap,
+    )
+    vector_store = ChromaVectorStore(
+        collection_name=config.chroma.collection_name,
+        persist_directory=config.chroma.persist_directory,
+        embedding_model=config.chroma.embedding_model,
+    )
+    llm_client = LLMFactory.create(
+        provider=config.llm.provider,
+        api_key=config.llm.api_key,
+        model=config.llm.model,
+    )
+
+    pipeline = RAGPipeline(
+        pdf_extractor=pdf_extractor,
+        text_chunker=text_chunker,
+        vector_store=vector_store,
+        llm_client=llm_client,
+    )
+
+    return pipeline, config
+
+
+def cmd_ingest(args):
+    """Ingest PDF command handler.
+
+    Args:
+        args: Command arguments
+    """
+    logger = get_logger("ingest")
+
+    pipeline, config = setup_pipeline()
+
+    pdf_path = Path(args.input)
+    if not pdf_path.exists():
+        logger.error(f"PDF file not found: {pdf_path}")
+        sys.exit(1)
+
+    try:
+        result = pipeline.ingest_pdf(
+            pdf_path=pdf_path,
+            force_recreate=args.recreate,
+        )
+        logger.info(f"Ingestion result: {result}")
+        print(f"\n✓ Successfully ingested PDF")
+        print(f"  Pages: {result['pages_extracted']}")
+        print(f"  Chunks: {result['chunks_created']}")
+        print(f"  Collection: {result['collection_name']}")
+    except Exception as e:
+        logger.error(f"Error during ingestion: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+def cmd_query(args):
+    """Query command handler.
+
+    Args:
+        args: Command arguments
+    """
+    logger = get_logger("query")
+
+    pipeline, config = setup_pipeline()
+
+    try:
+        result = pipeline.rag_query(
+            query=args.query,
+            n_retrieve=args.top_k,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+        )
+
+        print(f"\n{'='*60}")
+        print(f"Query: {result['query']}")
+        print(f"{'='*60}")
+        print(f"\nRetrieved {result['n_documents_retrieved']} documents:\n")
+
+        for i, doc in enumerate(result["retrieved_documents"], 1):
+            print(f"[Document {i}]")
+            print(doc[:200] + "..." if len(doc) > 200 else doc)
+            print()
+
+        print(f"{'='*60}")
+        print("Response:")
+        print(f"{'='*60}")
+        print(result["response"])
+
+    except Exception as e:
+        logger.error(f"Error during query: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+def cmd_extract_tables(args):
+    """Extract tables command handler.
+
+    Args:
+        args: Command arguments
+    """
+    logger = get_logger("extract_tables")
+
+    try:
+        extractor = PDFTableExtractor(method="pdfplumber")
+        pdf_path = Path(args.input)
+
+        if not pdf_path.exists():
+            logger.error(f"PDF file not found: {pdf_path}")
+            sys.exit(1)
+
+        output_path = Path(args.output) if args.output else None
+        json_result = extractor.extract_tables_to_json(pdf_path, output_path)
+
+        if output_path:
+            print(f"\n✓ Tables extracted and saved to: {output_path}")
+        else:
+            print(f"\n✓ Tables extracted ({len(json_result)} bytes)")
+            print(json_result)
+
+    except Exception as e:
+        logger.error(f"Error extracting tables: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+def cmd_status(args):
+    """Status command handler.
+
+    Args:
+        args: Command arguments
+    """
+    logger = get_logger("status")
+
+    try:
+        pipeline, config = setup_pipeline()
+        status = pipeline.get_status()
+
+        print(f"\n{'='*60}")
+        print("RAG Pipeline Status")
+        print(f"{'='*60}")
+        print(f"LLM Provider: {status['llm_provider']}")
+        print(f"LLM Model: {status['llm_model']}")
+        print(f"Vector Store: {status['vector_store']}")
+        print(f"Collection: {status['collection_info'].get('name', 'N/A')}")
+        print(
+            f"Documents: {status['collection_info'].get('document_count', 'N/A')}"
+        )
+        print(f"PDF Extractor: {status['pdf_extractor']}")
+        print(f"Chunk Size: {status['chunk_size']}")
+        print(f"Chunk Overlap: {status['chunk_overlap']}")
+
+    except Exception as e:
+        logger.error(f"Error getting status: {str(e)}", exc_info=True)
+        sys.exit(1)
+
+
+def main():
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="RAG System with LangChain and ChromaDB",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Ingest a PDF
+  python main.py ingest --input document.pdf
+  
+  # Query the ingested documents
+  python main.py query --query "What is the main topic?"
+  
+  # Extract tables from PDF
+  python main.py extract-tables --input document.pdf --output tables.json
+  
+  # Show pipeline status
+  python main.py status
+        """,
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Ingest command
+    ingest_parser = subparsers.add_parser(
+        "ingest", help="Ingest PDF into vector store"
+    )
+    ingest_parser.add_argument(
+        "--input",
+        "-i",
+        required=True,
+        help="Path to PDF file",
+    )
+    ingest_parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="Recreate collection (delete existing)",
+    )
+    ingest_parser.set_defaults(func=cmd_ingest)
+
+    # Query command
+    query_parser = subparsers.add_parser("query", help="Query documents")
+    query_parser.add_argument(
+        "--query",
+        "-q",
+        required=True,
+        help="Query text",
+    )
+    query_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Number of documents to retrieve (default: 5)",
+    )
+    query_parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="LLM temperature (default: 0.7)",
+    )
+    query_parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=2048,
+        help="Max tokens in response (default: 2048)",
+    )
+    query_parser.set_defaults(func=cmd_query)
+
+    # Extract tables command
+    tables_parser = subparsers.add_parser(
+        "extract-tables", help="Extract tables from PDF"
+    )
+    tables_parser.add_argument(
+        "--input",
+        "-i",
+        required=True,
+        help="Path to PDF file",
+    )
+    tables_parser.add_argument(
+        "--output",
+        "-o",
+        help="Output JSON file path",
+    )
+    tables_parser.set_defaults(func=cmd_extract_tables)
+
+    # Status command
+    status_parser = subparsers.add_parser(
+        "status", help="Show pipeline status"
+    )
+    status_parser.set_defaults(func=cmd_status)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(0)
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

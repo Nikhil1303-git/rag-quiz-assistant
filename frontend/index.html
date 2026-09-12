@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Control Room</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">R</span><span>RAG Control Room</span></div>
+      <button class="ghost-button" id="refresh-status" type="button">Refresh status</button>
+    </header>
+
+    <section class="intro">
+      <div>
+        <p class="eyebrow">DOCUMENT INTELLIGENCE / LOCAL WORKSPACE</p>
+        <h1>Ask your documents<br><em>better questions.</em></h1>
+        <p class="lede">Load a PDF, watch it become searchable, then test the full retrieval and answer loop.</p>
+      </div>
+      <div class="signal"><span class="signal-dot"></span><span id="connection-label">Checking pipeline</span></div>
+    </section>
+
+    <section class="dashboard-grid">
+      <aside class="sidebar">
+        <div class="section-label">Pipeline health</div>
+        <div class="health-row"><span class="health-name">API server</span><span class="badge badge-live" id="api-health">checking</span></div>
+        <div class="health-row"><span class="health-name">Vector store</span><span class="badge" id="store-health">checking</span></div>
+        <div class="health-row"><span class="health-name">Documents indexed</span><strong id="document-count">--</strong></div>
+        <div class="divider"></div>
+        <div class="section-label">Configuration</div>
+        <dl class="config-list">
+          <div><dt>Provider</dt><dd id="provider">--</dd></div>
+          <div><dt>Model</dt><dd id="model">--</dd></div>
+          <div><dt>Embeddings</dt><dd id="embedding">--</dd></div>
+          <div><dt>Chunk size</dt><dd id="chunk-size">--</dd></div>
+        </dl>
+      </aside>
+
+      <div class="workspace">
+        <section class="panel upload-panel">
+          <div class="panel-heading"><div><p class="eyebrow">01 / INGEST</p><h2>Put a document on the desk</h2></div><span class="panel-number">01</span></div>
+          <form id="upload-form">
+            <label class="dropzone" id="dropzone" for="pdf-file">
+              <span class="upload-icon">+</span><span class="drop-title" id="file-label">Choose a PDF</span><span class="drop-hint">or drag and drop it here</span>
+              <input id="pdf-file" name="file" type="file" accept="application/pdf">
+            </label>
+            <div class="form-footer"><label class="check-label"><input id="recreate" type="checkbox"> Recreate collection</label><button class="primary-button" type="submit">Ingest document <span>↗</span></button></div>
+          </form>
+          <div class="result" id="ingest-result" aria-live="polite"></div>
+        </section>
+
+        <section class="panel query-panel">
+          <div class="panel-heading"><div><p class="eyebrow">02 / QUERY</p><h2>Interrogate the index</h2></div><span class="panel-number">02</span></div>
+          <form id="query-form">
+            <label class="question-label" for="question">Your question</label>
+            <textarea id="question" rows="3" placeholder="What is the central argument of this document?" required></textarea>
+            <div class="controls"><label>Retrieve <input id="top-k" type="number" min="1" max="20" value="5"> chunks</label><button class="primary-button" type="submit">Ask the index <span>↗</span></button></div>
+          </form>
+          <div class="answer" id="answer" aria-live="polite"><div class="empty-state">Your answer will appear here, grounded in the indexed PDF.</div></div>
+          <div class="sources" id="sources"></div>
+        </section>
+
+        <section class="panel quiz-panel">
+          <div class="panel-heading"><div><p class="eyebrow">03 / PRACTICE</p><h2>Interview quiz mode</h2></div><span class="panel-number">03</span></div>
+          <p class="lede" style="margin:0 0 18px;max-width:none;">Generates interview questions from the indexed document, then grades your typed answer against it.</p>
+          <div class="controls" style="margin-top:0;">
+            <label>Generate <input id="quiz-count" type="number" min="1" max="15" value="5"> questions</label>
+            <button class="primary-button" id="quiz-generate" type="button">Generate quiz <span>↗</span></button>
+          </div>
+          <div class="result" id="quiz-status" aria-live="polite"></div>
+          <div id="quiz-list"></div>
+        </section>
+      </div>
+    </section>
+    <p class="footer-note">Run with <code>python web_server.py</code> · localhost:5000</p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
